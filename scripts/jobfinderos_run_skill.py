@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
-"""Run a JobFinderOS Claude Code skill locally."""
+"""Run a JobFinderOS skill locally, on either harness.
+
+JOBFINDEROS_HARNESS picks the CLI (default `claude`, so the installed scheduler jobs keep
+running exactly as before):
+
+  claude    `claude -p /<skill> --output-format json --allowedTools …`
+  opencode  `opencode run --format json --archived --auto`, sending the command's own body
+            as the prompt (`opencode run` does not expand slash commands) and selecting the
+            persona with `--agent` from the command's frontmatter.
+
+Both write the same run log; only the result parsing differs (Claude's single JSON object
+vs OpenCode's NDJSON event stream).
+"""
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +25,7 @@ from pathlib import Path
 
 DEFAULT_TIMEOUT_SEC = 1800
 DEFAULT_ALLOWED_TOOLS = "Agent,Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch"
+HARNESSES = ("claude", "opencode")
 
 
 def project_root() -> Path:
@@ -45,38 +59,98 @@ def log_dir(root: Path) -> Path:
     return Path(configured).expanduser() if configured else root / "logs"
 
 
-def record_result(root: Path, label: str, stdout: str, stderr: str) -> dict:
+def record_result(root: Path, label: str, stdout: str, stderr: str, harness: str = "claude") -> dict:
     """Save the skill's text to logs/skills/ and pull tokens + estimated cost out of the
-    CLI's JSON result (see tests/data/claude_result_sample.json for the shape)."""
+    CLI's result (Claude: tests/data/claude_result_sample.json; OpenCode:
+    tests/data/opencode_result_sample.ndjson)."""
     import json
 
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
     out_dir = log_dir(root) / "skills"
     out_dir.mkdir(parents=True, exist_ok=True)
     usage: dict = {}
-    text = stdout or ""
-    try:
-        payload = json.loads(text.strip() or "{}")
-    except ValueError:
-        payload = {}
-    if isinstance(payload, dict) and "result" in payload:
-        text = str(payload.get("result") or "")
-        u = payload.get("usage") or {}
-        usage = {
-            "is_error": bool(payload.get("is_error")),
-            "error": str(payload.get("terminal_reason") or "") if payload.get("is_error") else "",
-            "cost_usd": float(payload.get("total_cost_usd") or 0.0),
-            "input_tokens": int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0) + int(u.get("cache_creation_input_tokens") or 0),
-            "output_tokens": int(u.get("output_tokens") or 0),
-            "num_turns": int(payload.get("num_turns") or 0),
-        }
-        usage["summary"] = (f"est. ${usage['cost_usd']:.2f}, {usage['input_tokens']} in / {usage['output_tokens']} out tokens, "
-                            f"{usage['num_turns']} turns")
+
+    if harness == "opencode":
+        text, usage = parse_opencode_stream(stdout)
+    else:
+        text = stdout or ""
+        try:
+            payload = json.loads(text.strip() or "{}")
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict) and "result" in payload:
+            text = str(payload.get("result") or "")
+            u = payload.get("usage") or {}
+            usage = {
+                "is_error": bool(payload.get("is_error")),
+                "error": str(payload.get("terminal_reason") or "") if payload.get("is_error") else "",
+                "cost_usd": float(payload.get("total_cost_usd") or 0.0),
+                "input_tokens": int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0) + int(u.get("cache_creation_input_tokens") or 0),
+                "output_tokens": int(u.get("output_tokens") or 0),
+                "num_turns": int(payload.get("num_turns") or 0),
+            }
+            usage["summary"] = (f"est. ${usage['cost_usd']:.2f}, {usage['input_tokens']} in / {usage['output_tokens']} out tokens, "
+                                f"{usage['num_turns']} turns")
     with open(out_dir / f"{stamp}-{label}.txt", "w", encoding="utf-8") as fh:
         fh.write(text)
         if stderr:
             fh.write("\n\n--- stderr ---\n" + stderr)
     return usage
+
+
+def parse_opencode_stream(stdout: str) -> tuple[str, dict]:
+    """`opencode run --format json` prints one JSON event per line (NDJSON): assistant text
+    arrives as `text` events, token totals and cost on every `step_finish`, and a failure as
+    a single `error` event (shape reference: tests/data/opencode_result_sample.ndjson).
+    Non-JSON lines are ignored; with no recognized event the raw output is kept as text."""
+    import json
+
+    chunks: list[str] = []
+    cost_usd = 0.0
+    input_tokens = output_tokens = 0
+    turns = 0
+    error = ""
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        kind = event.get("type")
+        if kind == "text":
+            chunks.append(str((event.get("part") or {}).get("text") or ""))
+        elif kind == "step_finish":
+            part = event.get("part") or {}
+            tokens = part.get("tokens") or {}
+            cost_usd += float(part.get("cost") or 0.0)
+            input_tokens += int(tokens.get("input") or 0) + int((tokens.get("cache") or {}).get("read") or 0)
+            output_tokens += int(tokens.get("output") or 0)
+            turns += 1
+        elif kind == "error":
+            err = event.get("error") or {}
+            error = str(err.get("message") or err.get("type") or "unknown error")
+
+    text = "\n".join(chunk for chunk in chunks if chunk)
+    if not chunks and (stdout or "").strip() and not error:
+        text = stdout.strip()
+
+    usage = {
+        "is_error": bool(error),
+        "error": error,
+        "cost_usd": cost_usd,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "num_turns": turns,
+    }
+    if turns or cost_usd:
+        usage["summary"] = (
+            f"est. ${cost_usd:.2f}, {input_tokens} in / {output_tokens} out tokens, {turns} turns"
+        )
+    return text, usage
 
 
 def find_claude() -> str | None:
@@ -85,6 +159,44 @@ def find_claude() -> str | None:
         return configured
 
     return shutil.which("claude")
+
+
+def find_opencode() -> str | None:
+    configured = os.environ.get("OPENCODE_BIN")
+    if configured:
+        return configured
+
+    return shutil.which("opencode")
+
+
+def cli_argv(binary: str) -> list[str]:
+    """A `.py` target runs under the current interpreter: the token-free fakes in tests/
+    point CLAUDE_BIN / OPENCODE_BIN at a script, which is not executable as-is on Windows.
+    The real CLIs never end in `.py` and are invoked unchanged."""
+    if binary.endswith(".py"):
+        return [sys.executable, binary]
+    return [binary]
+
+
+def command_frontmatter(path: Path) -> dict:
+    """Flat `key: value` frontmatter of a skill file. No YAML dependency: the command
+    files only carry top-level scalars, so indented continuation lines are skipped."""
+    match = re.match(r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n?", path.read_text(encoding="utf-8"), re.S)
+    if not match:
+        return {}
+    meta: dict = {}
+    for line in match.group(1).splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.strip() and not key.startswith((" ", "\t", "#")):
+            meta[key.strip()] = value.strip()
+    return meta
+
+
+def command_body(path: Path) -> str:
+    """The prompt template: the skill file minus its frontmatter (what OpenCode submits)."""
+    text = path.read_text(encoding="utf-8")
+    match = re.match(r"^---[ \t]*\r?\n.*?\r?\n---[ \t]*\r?\n?", text, re.S)
+    return (text[match.end():] if match else text).strip()
 
 
 def main() -> int:
@@ -99,7 +211,21 @@ def main() -> int:
     skill = sys.argv[2]
     root = project_root()
 
-    command_file = root / ".claude" / "commands" / f"{skill}.md"
+    harness = os.environ.get("JOBFINDEROS_HARNESS", "").strip().lower() or "claude"
+    if harness not in HARNESSES:
+        print(
+            "JobFinderOS_run_skill: JOBFINDEROS_HARNESS must be one of "
+            + ", ".join(HARNESSES),
+            file=sys.stderr,
+        )
+        return 2
+
+    command_file = (
+        root
+        / (".opencode" if harness == "opencode" else ".claude")
+        / "commands"
+        / f"{skill}.md"
+    )
     if not command_file.is_file():
         print(
             f"JobFinderOS_run_skill: missing skill file: {command_file}",
@@ -107,12 +233,14 @@ def main() -> int:
         )
         return 2
 
-    claude_bin = find_claude()
-    if not claude_bin:
-        print(
-            "JobFinderOS_run_skill: claude CLI not found " "(set CLAUDE_BIN)",
-            file=sys.stderr,
-        )
+    if harness == "opencode":
+        cli_bin = find_opencode()
+        missing_cli = "JobFinderOS_run_skill: opencode CLI not found (set OPENCODE_BIN)"
+    else:
+        cli_bin = find_claude()
+        missing_cli = "JobFinderOS_run_skill: claude CLI not found (set CLAUDE_BIN)"
+    if not cli_bin:
+        print(missing_cli, file=sys.stderr)
         return 127
 
     try:
@@ -149,20 +277,34 @@ def main() -> int:
     # Explicit tools and a permission mode instead of --dangerously-skip-permissions: a
     # scheduled run reads untrusted web pages and email with nobody watching. acceptEdits
     # lets the skill write the vault; anything outside the allowed tools is refused.
-    command = [
-        claude_bin,
-        "-p",
-        f"/{skill}",
-        "--output-format",
-        "json",
-        "--allowedTools",
-        allowed_tools,
-        "--permission-mode",
-        os.environ.get("JOBFINDEROS_PERMISSION_MODE", "acceptEdits"),
-        "--permission-prompts",
-        "none",
-        "--no-session-persistence",
-    ]
+    if harness == "opencode":
+        # `opencode run` submits a prompt; it does not expand `/skill` (verified), so the
+        # command's own body is the prompt and `--agent` selects the persona the command's
+        # frontmatter names. `--auto` approves what the deny rules in opencode.json do not
+        # forbid, which is the acceptEdits / allowedTools counterpart.
+        tail = ["run", "--format", "json", "--archived", "--auto"]
+        agent = command_frontmatter(command_file).get("agent")
+        if agent:
+            tail += ["--agent", agent]
+        model = os.environ.get("JOBFINDEROS_OPENCODE_MODEL")
+        if model:
+            tail += ["--model", model]
+        tail.append(command_body(command_file))
+    else:
+        tail = [
+            "-p",
+            f"/{skill}",
+            "--output-format",
+            "json",
+            "--allowedTools",
+            allowed_tools,
+            "--permission-mode",
+            os.environ.get("JOBFINDEROS_PERMISSION_MODE", "acceptEdits"),
+            "--permission-prompts",
+            "none",
+            "--no-session-persistence",
+        ]
+    command = cli_argv(cli_bin) + tail
 
     append_run_log(root, label, "start")
 
@@ -185,7 +327,7 @@ def main() -> int:
         print(f"JobFinderOS_run_skill: {exc}", file=sys.stderr)
         return 127
 
-    usage = record_result(root, label, result.stdout, result.stderr)
+    usage = record_result(root, label, result.stdout, result.stderr, harness)
 
     if result.returncode != 0 or usage.get("is_error"):
         append_run_log(

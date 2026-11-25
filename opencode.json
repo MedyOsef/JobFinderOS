@@ -1,0 +1,40 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["CLAUDE.md"],
+  "mcp": {
+    "servers": {
+      "gmail": {
+        "type": "remote",
+        "url": "https://gmailmcp.googleapis.com/mcp/v1",
+        "oauth": {
+          "client_id": "{env:GMAIL_MCP_CLIENT_ID}",
+          "client_secret": "{env:GMAIL_MCP_CLIENT_SECRET}",
+          "scope": "https://www.googleapis.com/auth/gmail.readonly"
+        }
+      }
+    }
+  },
+  "permissions": [
+    { "action": "shell", "resource": "*sendmail*", "effect": "deny" },
+    { "action": "shell", "resource": "*Send-MailMessage*", "effect": "deny" },
+    { "action": "shell", "resource": "*mailx*", "effect": "deny" },
+    { "action": "shell", "resource": "*mutt*", "effect": "deny" },
+    { "action": "shell", "resource": "*swaks*", "effect": "deny" },
+    { "action": "shell", "resource": "*smtp*", "effect": "deny" },
+    { "action": "shell", "resource": "*mailto:*", "effect": "deny" },
+    { "action": "shell", "resource": "*send-email*", "effect": "deny" },
+    { "action": "shell", "resource": "*sendgrid*", "effect": "deny" },
+    { "action": "shell", "resource": "*mailgun*", "effect": "deny" },
+    { "action": "shell", "resource": "*nodemailer*", "effect": "deny" },
+    { "action": "shell", "resource": "git commit *", "effect": "deny" },
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "*_send*", "resource": "*", "effect": "deny" },
+    { "action": "*_draft*", "resource": "*", "effect": "deny" },
+    { "action": "*_forward*", "resource": "*", "effect": "deny" },
+    { "action": "*_reply*", "resource": "*", "effect": "deny" },
+    { "action": "gmail_*", "resource": "*", "effect": "deny" },
+    { "action": "gmail_search_threads", "resource": "*", "effect": "allow" },
+    { "action": "gmail_get_thread", "resource": "*", "effect": "allow" },
+    { "action": "gmail_get_message", "resource": "*", "effect": "allow" }
+  ]
+}

@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -142,7 +143,10 @@ class ClaudeCLI:
     # ------------------------------------------------------------------ argv
 
     def argv(self, call: LLMCall) -> list[str]:
-        args = [self.claude_bin, "-p"]
+        # A `.py` claude_bin (the token-free fake the test suite sets in CLAUDE_BIN) cannot
+        # be executed as-is on Windows; a real CLI never ends in `.py` and is run unchanged.
+        head = [sys.executable, self.claude_bin] if self.claude_bin.endswith(".py") else [self.claude_bin]
+        args = head + ["-p"]
         if not call.prompt_via_stdin:
             args.append(call.full_prompt())
         args += [
