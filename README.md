@@ -6,7 +6,7 @@
 
 <p align="center"><b>Find your dream job with Claude Code agents. No coffee breaks, no doomscrolling, no sleep till you're hired!</b></p>
 
-This project capitalizes on one simple fact:  a career search is a numbers game. More real contacts lead to more listings you hear about early, more of those become applications with a person attached, and more of those become interviews. A single human running that chain alone has limited hours in the week. Agents do not. JobFinderOS is a Claude code project that puts agents to work on your search, profiling markets, following companies, crawling job postings, identifying new strategic contacts and preparing you for every interview. Each stage of the job search funnel gets more nurturing than you could feed it yourself, and the judgment stays with you.
+This project capitalizes on one simple fact:  a career search is a numbers game. More real contacts lead to more listings you hear about early, more of those become applications with a person attached, and more of those become interviews. A single human running that chain alone has limited hours in the week. Agents do not. JobFinderOS is a Claude Code project (ported to run on [OpenCode](https://opencode.ai) as well, see [below](#alternative-run-it-on-opencode)) that puts agents to work on your search, profiling markets, following companies, crawling job postings, identifying new strategic contacts and preparing you for every interview. Each stage of the job search funnel gets more nurturing than you could feed it yourself, and the judgment stays with you.
 
 This manual covers four things:
 
@@ -52,7 +52,7 @@ JobFinderOS is a set of agent personas and skills that run inside [Claude Code](
 
 **What it never does.** It never sends an email or a message. Drafts go to your clipboard and the vault, and you send them from your own client. It never mass-applies. It never sits in the interview.
 
-**What it needs.** A Claude Code subscription. No API keys. Python is only used by the optional scheduler.
+**What it needs.** A Claude Code subscription, or an [OpenCode](https://opencode.ai) install with any provider it supports. No API keys on the Claude Code path. Python is only used by the optional scheduler.
 
 ---
 
@@ -62,7 +62,7 @@ Four steps. The first two happen in your terminal, the last two inside Claude Co
 
 ### Step 1. Get Claude Code
 
-You need [Claude Code](https://claude.com/claude-code) installed and logged in with a subscription. No API keys.
+You need [Claude Code](https://claude.com/claude-code) installed and logged in with a subscription. No API keys. (Using [OpenCode](https://opencode.ai) instead? Jump to [Alternative: run it on OpenCode](#alternative-run-it-on-opencode).)
 
 ```bash
 claude auth login
@@ -73,7 +73,7 @@ claude auth login
 **macOS / Linux**
 
 ```bash
-git clone https://github.com/matthewprice/JobFinderOS.git
+git clone https://github.com/MedyOsef/JobFinderOS.git
 cd JobFinderOS
 python3 -m venv .venv
 source .venv/bin/activate
@@ -84,7 +84,7 @@ claude
 **Windows PowerShell**
 
 ```powershell
-git clone https://github.com/matthewprice/JobFinderOS.git
+git clone https://github.com/MedyOsef/JobFinderOS.git
 cd JobFinderOS
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -170,6 +170,23 @@ Each of these is independent. Add them when you want them.
   ```bash
   bash scripts/verify_local_automation.sh
   ```
+
+### Alternative: run it on OpenCode
+
+The same three agents and all 25 skills also run in [OpenCode](https://opencode.ai) (V2), side by side with Claude Code. The port lives in `.opencode/` and `opencode.json`, and `roadmap.md` documents it phase by phase. Run `opencode` instead of `claude` from the repository you cloned in Step 2:
+
+```bash
+opencode
+```
+
+Inside the OpenCode TUI everything behaves the same: `/onboard`, `/jobs-daily`, `/whats-next`, the whole set. The two harnesses share one repository without touching each other: `.claude/` stays exactly as it is, and `scripts/jobfinderos_run_skill.py` still defaults to `claude`. To run a scheduled skill through OpenCode instead:
+
+```powershell
+$env:JOBFINDEROS_HARNESS = "opencode"
+python .\scripts\jobfinderos_run_skill.py jobs-daily jobs-daily
+```
+
+If your provider's default model is out of quota, point `JOBFINDEROS_OPENCODE_MODEL` at the model you want. On this path the never-send rule is not only doctrine but a technical lock: `opencode.json` denies the shell mail senders, `git commit`, `git push`, and every MCP tool whose name betrays a send, and the Gmail server is requested with the read-only scope only. [Email safety](#email-safety) has the details.
 
 ---
 
@@ -307,16 +324,22 @@ Set a deadline for having an offer in hand. Finals two weeks before that, hiring
 ```
 .claude/agents/      coach.md · scout.md · mark.md         the three agents
 .claude/commands/    25 skills                             each names its agent in the first line
+.opencode/agents/    the same three agents                 OpenCode frontmatter (mode, permissions)
+.opencode/commands/  the same 25 skills                    OpenCode frontmatter (agent, subagent)
+opencode.json        OpenCode config: CLAUDE.md, never-send denies, Gmail read-only
 config/              profile, rubric, wins, voice, targets  your copies are gitignored; templates ship
 config/recruiter_playbook.md                               the doctrine in Section 4, in full
 scripts/             scheduler, guards, ATS poller, pruner
 vault/               the Obsidian vault
+roadmap.md           how the OpenCode port was built, phase by phase
 CLAUDE.md            project instructions the agents read every run
 ```
 
 ### Email safety
 
-No code in this repository calls a send or draft API. Gmail is reached only through the claude.ai MCP connector, and that connector does expose send and draft tools. What keeps the agents read-only is doctrine: `CLAUDE.md`, the agent files, and the playbook all forbid sending and drafting, and every draft goes to the clipboard and the vault instead. Read those instructions before you trust the system with your inbox; there is no separate technical lock.
+No code in this repository calls a send or draft API. Gmail is reached only through the claude.ai MCP connector, and that connector does expose send and draft tools. What keeps the agents read-only is doctrine: `CLAUDE.md`, the agent files, and the playbook all forbid sending and drafting, and every draft goes to the clipboard and the vault instead. Read those instructions before you trust the system with your inbox; on the Claude Code path there is no separate technical lock.
+
+On OpenCode the same rule is enforced technically, on top of the doctrine. `opencode.json` denies the shell mail senders (`sendmail`, `Send-MailMessage`, `mailx`, `mutt`, `swaks`, SMTP, `mailto:`, `send-email`, `sendgrid`, `mailgun`, `nodemailer`), `git commit`, `git push`, and every MCP tool whose name betrays a send (`*_send*`, `*_draft*`, `*_forward*`, `*_reply*`). The Gmail MCP server is requested with the `gmail.readonly` scope alone, then denied wholesale (`gmail_*`) and allowed back only for the three read tools the skills call (`search_threads`, `get_thread`, `get_message`). A deny is not an ask: `echo sendmail` fails with `Permission denied: shell` even under `--auto`. The guards live in `tests/test_opencode_permissions.py`, and your Gmail credentials are read from environment variables, never stored in this repository.
 
 ### Privacy
 
@@ -369,6 +392,7 @@ The most valuable contribution is a new skill. Each file in `.claude/commands/` 
 - **Keep it career-neutral.** Skills read `config/profile.md` for everything about the candidate. Nothing about a specific person, industry, or company belongs in a skill.
 - **Follow the playbook.** Warm path first, low outreach volume, a human in the loop on every message, and a Recruiter's read at the end. `config/recruiter_playbook.md` is the doctrine; a skill that fights it will not be merged.
 - **Never send.** Drafts go to the clipboard and the vault. No skill may send email, create Gmail drafts, or post anywhere on the candidate's behalf.
+- **Port both command folders.** Every skill ships twice: `.claude/commands/` for Claude Code and `.opencode/commands/` for OpenCode. When you add or change one, copy it across with the OpenCode frontmatter (`description`, `agent`, `subagent`) and the mechanical rewrites described in `roadmap.md`, or OpenCode users will not get it.
 - **Scrub before you push.** Check the diff for your own profile, wins, contacts, or vault notes. The `.gitignore` covers the usual paths, but a copied example can slip through.
 
 Say in the pull request what the skill is for, which agent runs it, and what it wrote to the vault when you ran it. MIT licensed, so contributions are too.

@@ -2,6 +2,22 @@
 
 User-facing changes, newest first. Release notes on GitHub are copied from here.
 
+## 1.1.0 (2026-11-25)
+
+JobFinderOS now also runs on [OpenCode](https://opencode.ai), alongside Claude Code. Nothing moved out of `.claude/`: the runner still defaults to `claude`, and both harnesses share one repository.
+
+**An additive OpenCode harness.** `.opencode/` carries the same three agents and all 25 skills, with the frontmatter translated (`mode`, `agent`, `subagent`) and only mechanical rewrites in the bodies. `opencode.json` wires `CLAUDE.md` through `instructions`, because OpenCode would otherwise load the developer `AGENTS.md` at the root instead of the project instructions. `scripts/jobfinderos_run_skill.py` gains `JOBFINDEROS_HARNESS=opencode` (default `claude`): it sends the command body rather than a slash command, because `opencode run` does not expand them, and parses the NDJSON event stream. `roadmap.md` documents the port phase by phase.
+
+**The never-send rule gained a technical lock.** On OpenCode, `opencode.json` denies the shell mail senders (`sendmail`, `Send-MailMessage`, `mailx`, `mutt`, `swaks`, SMTP, `mailto:`, `send-email`, `sendgrid`, `mailgun`, `nodemailer`), `git commit`, `git push`, and MCP tools whose names betray a send (`*_send*`, `*_draft*`, `*_forward*`, `*_reply*`). A deny is not an ask: `echo sendmail` fails with `Permission denied: shell` even under `--auto`. The Claude Code path is unchanged and still rests on doctrine alone.
+
+**Gmail on OpenCode is read-only by construction.** The official Google Gmail MCP server is requested with the `gmail.readonly` scope alone, then denied wholesale (`gmail_*`) and allowed back only for the three read tools the skills call (`search_threads`, `get_thread`, `get_message`). Credentials are read from environment variables; the repository stores none. Sign-in is yours to complete, and without it every other skill still runs.
+
+**Tests.** 95 token-free tests, up from 78: the OpenCode runner path, the NDJSON parser, and permission guards in `tests/test_opencode_permissions.py`, with `tests/fake_opencode.py` standing in for the CLI.
+
+## Upgrading from 1.0.0
+
+Nothing to migrate. `JOBFINDEROS_HARNESS` defaults to `claude`, so existing installs behave exactly as before. To take the OpenCode path: install [OpenCode](https://opencode.ai), run `opencode` in the repository, and export `JOBFINDEROS_HARNESS=opencode` for scheduled runs (`JOBFINDEROS_OPENCODE_MODEL` if you want a specific model). If you maintain a fork, port new skills to both `.claude/commands/` and `.opencode/commands/`.
+
 ## 1.0.0 (2026-10-31)
 
 JobFinderOS 1.0.0 is the first tagged release. It is the system as it stands after the discovery rebuild: three agents (a recruiter, a crawler, a market analyst) on Claude Code, writing to an Obsidian vault, with job discovery now done by deterministic code instead of a model reading careers pages.
