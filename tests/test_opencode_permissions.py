@@ -5,6 +5,7 @@ these tests assert the harness-level denies in `opencode.json` still back it up.
 """
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -42,10 +43,27 @@ class TestOpenCodePermissions(unittest.TestCase):
         ):
             self.assertIn(tool, denied, f"{tool} must be denied at the shell layer")
 
-    def test_repo_writes_denied(self):
-        denied = self._denies("shell")
-        self.assertIn("git commit *", denied)
-        self.assertIn("git push *", denied)
+    def test_repo_writes_asked_globally_denied_for_agents(self):
+        # The human clicks "Allow" in the TUI for the session's own commits,
+        # but every persona frontmatter denies git outright: scheduled runs
+        # pass --auto, which auto-approves asks and never touches a deny.
+        effects = {
+            (rule["action"], rule["resource"]): rule["effect"]
+            for rule in self.permissions
+        }
+        for resource in ("git commit *", "git push *"):
+            self.assertEqual(effects.get(("shell", resource)), "ask")
+        for agent_file in sorted((ROOT / ".opencode" / "agents").glob("*.md")):
+            frontmatter = agent_file.read_text(encoding="utf-8").split("---")[1]
+            for resource in ("git commit *", "git push *"):
+                match = re.search(
+                    rf'- action: shell\s+resource: "{re.escape(resource)}"\s+effect: (\w+)',
+                    frontmatter,
+                )
+                self.assertIsNotNone(
+                    match, f"{agent_file.name} must deny {resource} for scheduled runs"
+                )
+                self.assertEqual(match.group(1), "deny")
 
     def test_mcp_send_tools_denied(self):
         actions = {rule["action"] for rule in self.permissions if rule["effect"] == "deny"}
