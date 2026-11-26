@@ -186,7 +186,7 @@ $env:JOBFINDEROS_HARNESS = "opencode"
 python .\scripts\jobfinderos_run_skill.py jobs-daily jobs-daily
 ```
 
-If your provider's default model is out of quota, point `JOBFINDEROS_OPENCODE_MODEL` at the model you want. On this path the never-send rule is not only doctrine but a technical lock: `opencode.json` denies the shell mail senders, `git commit`, `git push`, and every MCP tool whose name betrays a send, and the Gmail server is requested with the read-only scope only. [Email safety](#email-safety) has the details.
+If your provider's default model is out of quota, point `JOBFINDEROS_OPENCODE_MODEL` at the model you want. On this path the never-send rule is not only doctrine but a technical lock: `opencode.json` denies the shell mail senders and every MCP tool whose name betrays a send, asks for your approval on `git commit` and `git push` (denied outright for the scheduled personas, so automation never pushes on its own), and requests the Gmail server with the read-only scope only. [Email safety](#email-safety) has the details.
 
 ---
 
